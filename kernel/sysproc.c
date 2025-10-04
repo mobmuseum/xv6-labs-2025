@@ -7,6 +7,23 @@
 #include "proc.h"
 #include "vm.h"
 
+
+uint64
+sys_interpose(void)
+{
+    int mask;
+    char path[MAXPATH];
+
+    argint(0, &mask);
+    argstr(1, path, MAXPATH);
+
+    struct proc *p = myproc();
+    p->sandbox_mask = mask;
+
+    return 0;
+}
+
+
 uint64
 sys_exit(void)
 {
