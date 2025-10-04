@@ -1,0 +1,14 @@
+1. The function that called syscall: usertrap()
+
+2. Value of p->trapframe->a7: 0x7
+   This represents the syscall number for exec().
+
+3. Previous CPU mode: User mode (SPP = 0)
+
+4. Faulting instruction: lw a5,0(a0)
+   Register corresponding to 'num': a0
+
+5. Reason for kernel crash: The kernel dereferenced address 0 (unmapped),
+   causing a load page fault (scause=0xd).
+
+6. Process running during panic: "init", pid = 1
