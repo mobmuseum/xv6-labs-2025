@@ -19,6 +19,7 @@ sys_interpose(void)
 
     struct proc *p = myproc();
     p->sandbox_mask = mask;
+    safestrcpy(p->allowed_path, path, MAXPATH);
 
     return 0;
 }

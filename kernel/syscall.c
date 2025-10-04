@@ -137,18 +137,22 @@ syscall(void)
   struct proc *p = myproc();
 
   num = p->trapframe->a7;
-  if ((p->sandbox_mask & (1 <<num)) != 0){
-    printf("Sandbox: rejecting syscall %d\n", num);
-    p->trapframe->a0 = -1;
-    return;
+
+  // If syscall is masked:
+  if ((p->sandbox_mask & (1 << num)) != 0) {
+    // Let open and exec proceed so they can make path-based decisions
+    if (num != SYS_open && num != SYS_exec) {
+      // For other syscalls, just reject immediately
+      p->trapframe->a0 = -1;
+      return;
+    }
   }
+
+  // Normal syscall dispatch
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
-    // Use num to lookup the system call function for num, call it,
-    // and store its return value in p->trapframe->a0
     p->trapframe->a0 = syscalls[num]();
   } else {
-    printf("%d %s: unknown sys call %d\n",
-            p->pid, p->name, num);
+    printf("%d %s: unknown sys call %d\n", p->pid, p->name, num);
     p->trapframe->a0 = -1;
   }
 }
