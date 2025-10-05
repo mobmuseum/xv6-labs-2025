@@ -1,3 +1,9 @@
+Question 1: For every page table entry in the print_pgtbl output, explain what it 
+logically contains and what its permission bits are. Figure 3.4 in the xv6 book 
+might be helpful, although note that the figure might have a slightly different 
+set of pages than process that's being inspected here. Note that xv6 doesn't 
+place the virtual pages consecutively in physical memory. 
+
 Virtual Address         Physical Address            Perm        Meaning/Region
 
 0x0000 - 0x1000         0x87F22000 – 0x87F1F000     0x5B        User text/data (R/W)
@@ -7,3 +13,14 @@ Virtual Address         Physical Address            Perm        Meaning/Region
 0x5000–0x3FFFFFD000	        —	                    0x0	        Unmapped
 0x3FFFFFE000	        0x87F42000	                0xC7	    Trapframe (kernel, R/W, no U)
 0x3FFFFFF000	        0x80006000	                0x4B	    Trampoline (kernel, R/X, no U)
+
+Question 2: Which other xv6 system call(s) could be made faster using this shared page? Explain how. 
+
+1. getpid(): It returns current process ID and it can be shared as it is already
+implemented and this helps avoid kernel trap.
+
+2. uptime(): It returns system tick count, and it can be shared as it is frequently 
+read but never written by user. This also helps avoid kernel trap for each read.
+
+3. time(): It returns system time, and it can be shared as it it updates once per
+tick. This allows fast user access to current time.
