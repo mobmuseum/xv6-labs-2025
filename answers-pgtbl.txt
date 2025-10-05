@@ -1,0 +1,9 @@
+Virtual Address         Physical Address            Perm        Meaning/Region
+
+0x0000 - 0x1000         0x87F22000 – 0x87F1F000     0x5B        User text/data (R/W)
+0x2000                  0x87F1E000	                0x17	    Read/Execute only
+0x3000	                0x87F1D000	                0x07	    Read/Execute (no user bit)
+0x4000	                0x87F1C000	                0xD7	    Kernel-mapped shared page
+0x5000–0x3FFFFFD000	        —	                    0x0	        Unmapped
+0x3FFFFFE000	        0x87F42000	                0xC7	    Trapframe (kernel, R/W, no U)
+0x3FFFFFF000	        0x80006000	                0x4B	    Trampoline (kernel, R/X, no U)
