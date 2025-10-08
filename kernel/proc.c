@@ -126,21 +126,20 @@ found:
   p->state = USED;
 
   // Allocate a trapframe page.
-if((p->trapframe = (struct trapframe *)kalloc()) == 0){
-  freeproc(p);
-  release(&p->lock);
-  return 0;
-}
+  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
 
-// Allocate a usyscall page.
-if((p->usyscall = (struct usyscall *)kalloc()) == 0){
-  freeproc(p);
-  release(&p->lock);
-  return 0;
-}
+  if ((p->usyscall = (struct usyscall*)kalloc()) == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  memset((char*)p->usyscall, 0, PGSIZE);
 
-// Initialize usyscall with the process PID
-p->usyscall->pid = p->pid;
+  p->usyscall->pid = p->pid;
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
@@ -165,13 +164,14 @@ p->usyscall->pid = p->pid;
 static void
 freeproc(struct proc *p)
 {
-if(p->trapframe)
-  kfree((void*)p->trapframe);
-p->trapframe = 0;
+  if(p->trapframe)
+    kfree((void*)p->trapframe);
+  p->trapframe = 0;
 
-if(p->usyscall)
-  kfree((void*)p->usyscall);
-p->usyscall = 0;
+  if(p->usyscall)
+    kfree((void*)p->usyscall);
+
+  p->usyscall = 0;
 
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
@@ -208,23 +208,22 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
-// map the trapframe page just below the trampoline page, for
-// trampoline.S.
-if(mappages(pagetable, TRAPFRAME, PGSIZE,
-            (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
-  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-  uvmfree(pagetable, 0);
-  return 0;
-}
+  // map the trapframe page just below the trampoline page, for
+  // trampoline.S.
+  if(mappages(pagetable, TRAPFRAME, PGSIZE,
+              (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+  
+  if(mappages(pagetable, USYSCALL, PGSIZE, (uint64)(p->usyscall), PTE_R | PTE_U) < 0){
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
 
-// map the usyscall page just below TRAPFRAME, read-only for user
-if(mappages(pagetable, USYSCALL, PGSIZE,
-            (uint64)(p->usyscall), PTE_R | PTE_U) < 0){
-  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-  uvmunmap(pagetable, TRAPFRAME, 1, 0);
-  uvmfree(pagetable, 0);
-  return 0;
-}
 
   return pagetable;
 }
@@ -236,7 +235,9 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
-  uvmunmap(pagetable, USYSCALL, 1, 0); 
+
+  uvmunmap(pagetable, USYSCALL, 1, 0);
+
   uvmfree(pagetable, sz);
 }
 
@@ -297,6 +298,20 @@ kfork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  np->trapframe->epc = p->trapframe->epc;
+  np->trapframe->sp = p->trapframe->sp;
+
+  if (np->usyscall)
+    np->usyscall->pid = np->pid;
+
+  uvmunmap(np->pagetable, USYSCALL, 1, 0);
+
+  if (mappages(np->pagetable, USYSCALL, PGSIZE, (uint64)(np->usyscall), PTE_R | PTE_U) < 0) {
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
