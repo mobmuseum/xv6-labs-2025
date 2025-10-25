@@ -1,0 +1,20 @@
+Question 2
+
+- If we push the 32 registers to kernel stack upon trap entry, the trap handler starts the user page
+table (satp) is still active, so kernel virtual addresses (including the kernel stack addresses) are not valid
+yet — the trap code cannot safely write to the kernel stack until the kernel switches page tables. The trampoline 
+design avoids this by writing the saved registers to TRAPFRAME (which is mapped under the current page table). 
+
+- The same problem occurs if we store registers in the proc structure: Kernel memory virtual addresses aren’t 
+necessarily valid under the user page table. Also there’s no free register available to compute/store addresses safely 
+before saving registers (the assembly trampoline uses sscratch/a0 trick precisely to gain a temporary register to do the 
+stores). The TRAPFRAME arrangement gives a simple, pre-mapped place to store the whole register set without complex address 
+juggling. 
+
+
+Question 3
+
+If you remove TRAMPOLINE, you must ensure the CPU’s stvec points to an address that will be valid with the user page table 
+active. That effectively means you must map whatever handler code stvec references into every user page table at the same 
+VA — which is exactly what TRAMPOLINE already does but in one safe, controlled place. Mapping the entire kernel handler 
+into user page tables would expand kernel-visible code/data and increase risk. 
