@@ -71,7 +71,8 @@ sys_pause(void)
   argint(0, &n);
   if(n < 0)
     n = 0;
-  acquire(&tickslock);
+  backtrace();
+    acquire(&tickslock);
   ticks0 = ticks;
   while(ticks - ticks0 < n){
     if(killed(myproc())){
