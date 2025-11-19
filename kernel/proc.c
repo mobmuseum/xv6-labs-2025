@@ -35,7 +35,7 @@ mlfq_init(void)
   }
 }
 
-static void __attribute__((unused))
+static __attribute__((unused)) void
 mlfq_enqueue(struct proc *p, int level)
 {
   struct procqueue *q = &mlfq_state.queues[level];
@@ -48,7 +48,7 @@ mlfq_enqueue(struct proc *p, int level)
   q->tail = p;
 }
 
-static struct proc * __attribute__((unused))
+static __attribute__((unused)) struct proc *
 mlfq_dequeue(int level)
 {
   struct procqueue *q = &mlfq_state.queues[level];
