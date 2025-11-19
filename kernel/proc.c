@@ -11,6 +11,7 @@ static const int mlfq_time_quanta[MLFQ_LEVELS] = {4, 8, 16, 32};
 
 struct spinlock mlfq_lock;
 extern uint ticks;
+extern struct proc proc[NPROC];
 
 struct procqueue {
   struct proc *head;
