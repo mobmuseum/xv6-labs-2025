@@ -9,6 +9,8 @@
 
 static const int mlfq_time_quanta[MLFQ_LEVELS] = {4, 8, 16, 32};
 
+struct spinlock mlfq_lock;
+
 struct procqueue {
   struct proc *head;
   struct proc *tail;
@@ -16,6 +18,11 @@ struct procqueue {
 
 struct mlfq_state {
   struct procqueue queues[MLFQ_LEVELS];
+};
+
+enum mlfq_enqueue_pos {
+  ENQUEUE_HEAD,
+  ENQUEUE_TAIL
 };
 
 static struct mlfq_state mlfq_state;
@@ -30,26 +37,53 @@ mlfq_queue_init(struct procqueue *q)
 static void
 mlfq_init(void)
 {
+  initlock(&mlfq_lock, "mlfq");
   for(int i = 0; i < MLFQ_LEVELS; i++) {
     mlfq_queue_init(&mlfq_state.queues[i]);
   }
 }
 
-static __attribute__((unused)) void
-mlfq_enqueue(struct proc *p, int level)
+static void
+mlfq_reset_budget(struct proc *p)
+{
+  p->time_slice_budget = mlfq_time_quanta[p->queue_level];
+}
+
+static void
+mlfq_queue_insert_locked(struct proc *p, int level, enum mlfq_enqueue_pos pos)
 {
   struct procqueue *q = &mlfq_state.queues[level];
   p->mlfq_next = 0;
-  if(q->tail) {
-    q->tail->mlfq_next = p;
-  } else {
+  if(pos == ENQUEUE_HEAD){
+    if(q->head == 0)
+      q->tail = p;
+    p->mlfq_next = q->head;
     q->head = p;
+  } else {
+    if(q->tail) {
+      q->tail->mlfq_next = p;
+    } else {
+      q->head = p;
+    }
+    q->tail = p;
   }
-  q->tail = p;
+  p->queued = 1;
 }
 
-static __attribute__((unused)) struct proc *
-mlfq_dequeue(int level)
+static void
+mlfq_enqueue_proc(struct proc *p, enum mlfq_enqueue_pos pos)
+{
+  if(p->queued)
+    return;
+
+  acquire(&mlfq_lock);
+  if(!p->queued)
+    mlfq_queue_insert_locked(p, p->queue_level, pos);
+  release(&mlfq_lock);
+}
+
+static struct proc *
+mlfq_dequeue_locked(int level)
 {
   struct procqueue *q = &mlfq_state.queues[level];
   struct proc *p = q->head;
@@ -58,8 +92,43 @@ mlfq_dequeue(int level)
     if(q->head == 0)
       q->tail = 0;
     p->mlfq_next = 0;
+    p->queued = 0;
   }
   return p;
+}
+
+static struct proc *
+mlfq_pick_next(void)
+{
+  for(;;){
+    struct proc *candidate = 0;
+
+    acquire(&mlfq_lock);
+    for(int level = 0; level < MLFQ_LEVELS; level++) {
+      candidate = mlfq_dequeue_locked(level);
+      if(candidate)
+        break;
+    }
+    release(&mlfq_lock);
+
+    if(candidate == 0)
+      return 0;
+
+    acquire(&candidate->lock);
+    if(candidate->state == RUNNABLE)
+      return candidate;
+    release(&candidate->lock);
+  }
+}
+
+static void
+mlfq_make_runnable(struct proc *p, enum mlfq_enqueue_pos pos, int reset_budget)
+{
+  if(p->state != RUNNABLE)
+    return;
+  if(reset_budget)
+    mlfq_reset_budget(p);
+  mlfq_enqueue_proc(p, pos);
 }
 
 static void
@@ -67,10 +136,11 @@ mlfq_reset_proc(struct proc *p)
 {
   p->base_priority = MLFQ_DEFAULT_PRIORITY;
   p->queue_level = MLFQ_DEFAULT_LEVEL;
-  p->time_slice_budget = mlfq_time_quanta[MLFQ_DEFAULT_LEVEL];
+  mlfq_reset_budget(p);
   p->total_runtime = 0;
   memset(p->queue_runtime, 0, sizeof(p->queue_runtime));
   p->mlfq_next = 0;
+  p->queued = 0;
 }
 
 struct cpu cpus[NCPU];
@@ -297,6 +367,7 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
+  mlfq_make_runnable(p, ENQUEUE_HEAD, 1);
 
   release(&p->lock);
 }
@@ -371,6 +442,8 @@ kfork(void)
   acquire(&np->lock);
   np->state = RUNNABLE;
   release(&np->lock);
+
+  mlfq_make_runnable(np, ENQUEUE_TAIL, 1);
 
   return pid;
 }
@@ -494,7 +567,6 @@ kwait(uint64 addr)
 void
 scheduler(void)
 {
-  struct proc *p;
   struct cpu *c = mycpu();
 
   c->proc = 0;
@@ -507,28 +579,22 @@ scheduler(void)
     intr_on();
     intr_off();
 
-    int found = 0;
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
-      }
-      release(&p->lock);
-    }
-    if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
+    struct proc *p = mlfq_pick_next();
+    if(p == 0){
       asm volatile("wfi");
+      continue;
     }
+
+    p->state = RUNNING;
+    c->proc = p;
+    swtch(&c->context, &p->context);
+
+    // Process is done running for now.
+    c->proc = 0;
+
+    if(p->state == RUNNABLE)
+      mlfq_make_runnable(p, ENQUEUE_TAIL, 0);
+    release(&p->lock);
   }
 }
 
@@ -566,6 +632,7 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
+  mlfq_reset_budget(p);
   sched();
   release(&p->lock);
 }
@@ -650,6 +717,7 @@ wakeup(void *chan)
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
         p->state = RUNNABLE;
+        mlfq_make_runnable(p, ENQUEUE_HEAD, 1);
       }
       release(&p->lock);
     }
@@ -671,6 +739,7 @@ kkill(int pid)
       if(p->state == SLEEPING){
         // Wake process from sleep().
         p->state = RUNNABLE;
+        mlfq_make_runnable(p, ENQUEUE_HEAD, 1);
       }
       release(&p->lock);
       return 0;
@@ -730,6 +799,29 @@ killed(struct proc *p)
   k = p->killed;
   release(&p->lock);
   return k;
+}
+
+int
+scheduler_tick(void)
+{
+  struct proc *p = myproc();
+
+  if(p == 0 || p->state != RUNNING)
+    return 0;
+
+  p->total_runtime++;
+  p->queue_runtime[p->queue_level]++;
+  if(p->time_slice_budget > 0)
+    p->time_slice_budget--;
+
+  if(p->time_slice_budget <= 0) {
+    if(p->queue_level < MLFQ_LEVELS - 1)
+      p->queue_level++;
+    mlfq_reset_budget(p);
+    return 1;
+  }
+
+  return 0;
 }
 
 // Copy to either a user address, or kernel address,

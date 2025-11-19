@@ -144,6 +144,7 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_procinfo\
+	$U/_mlfqdemo\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

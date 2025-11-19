@@ -113,4 +113,5 @@ struct proc {
   uint64 total_runtime;
   uint64 queue_runtime[MLFQ_LEVELS];
   struct proc *mlfq_next;
+  int queued;
 };
