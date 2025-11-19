@@ -3,8 +3,75 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "spinlock.h"
-#include "proc.h"
 #include "defs.h"
+#include "proc.h"
+#include "procinfo.h"
+
+static const int mlfq_time_quanta[MLFQ_LEVELS] = {4, 8, 16, 32};
+
+struct procqueue {
+  struct proc *head;
+  struct proc *tail;
+};
+
+struct mlfq_state {
+  struct procqueue queues[MLFQ_LEVELS];
+};
+
+static struct mlfq_state mlfq_state;
+
+static void
+mlfq_queue_init(struct procqueue *q)
+{
+  q->head = 0;
+  q->tail = 0;
+}
+
+static void
+mlfq_init(void)
+{
+  for(int i = 0; i < MLFQ_LEVELS; i++) {
+    mlfq_queue_init(&mlfq_state.queues[i]);
+  }
+}
+
+static void __attribute__((unused))
+mlfq_enqueue(struct proc *p, int level)
+{
+  struct procqueue *q = &mlfq_state.queues[level];
+  p->mlfq_next = 0;
+  if(q->tail) {
+    q->tail->mlfq_next = p;
+  } else {
+    q->head = p;
+  }
+  q->tail = p;
+}
+
+static struct proc * __attribute__((unused))
+mlfq_dequeue(int level)
+{
+  struct procqueue *q = &mlfq_state.queues[level];
+  struct proc *p = q->head;
+  if(p) {
+    q->head = p->mlfq_next;
+    if(q->head == 0)
+      q->tail = 0;
+    p->mlfq_next = 0;
+  }
+  return p;
+}
+
+static void
+mlfq_reset_proc(struct proc *p)
+{
+  p->base_priority = MLFQ_DEFAULT_PRIORITY;
+  p->queue_level = MLFQ_DEFAULT_LEVEL;
+  p->time_slice_budget = mlfq_time_quanta[MLFQ_DEFAULT_LEVEL];
+  p->total_runtime = 0;
+  memset(p->queue_runtime, 0, sizeof(p->queue_runtime));
+  p->mlfq_next = 0;
+}
 
 struct cpu cpus[NCPU];
 
@@ -56,6 +123,7 @@ procinit(void)
       p->state = UNUSED;
       p->kstack = KSTACK((int) (p - proc));
   }
+  mlfq_init();
 }
 
 // Must be called with interrupts disabled,
@@ -124,6 +192,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  mlfq_reset_proc(p);
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -168,6 +237,7 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  mlfq_reset_proc(p);
   p->state = UNUSED;
 }
 
@@ -607,6 +677,39 @@ kkill(int pid)
     }
     release(&p->lock);
   }
+  return -1;
+}
+
+int
+getprocinfo(int pid, struct procinfo *info)
+{
+  struct proc *p;
+  struct procinfo snapshot;
+
+  if(info == 0)
+    return -1;
+
+  memset(&snapshot, 0, sizeof(snapshot));
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->pid == pid && p->state != UNUSED){
+      snapshot.pid = p->pid;
+      snapshot.state = p->state;
+      snapshot.base_priority = p->base_priority;
+      snapshot.current_level = p->queue_level;
+      snapshot.time_slice_budget = p->time_slice_budget;
+      snapshot.total_runtime = p->total_runtime;
+      for(int i = 0; i < MLFQ_LEVELS; i++)
+        snapshot.queue_runtime[i] = p->queue_runtime[i];
+      safestrcpy(snapshot.name, p->name, PROCINFO_NAME_MAX);
+      release(&p->lock);
+      *info = snapshot;
+      return 0;
+    }
+    release(&p->lock);
+  }
+
   return -1;
 }
 

@@ -1,3 +1,6 @@
+#include "mlfq.h"
+#include "procstate.h"
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -79,8 +82,6 @@ struct trapframe {
   /* 280 */ uint64 t6;
 };
 
-enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
-
 // Per-process state
 struct proc {
   struct spinlock lock;
@@ -104,4 +105,12 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  // MLFQ scheduler metadata (Week 1 scaffolding).
+  int base_priority;
+  int queue_level;
+  int time_slice_budget;
+  uint64 total_runtime;
+  uint64 queue_runtime[MLFQ_LEVELS];
+  struct proc *mlfq_next;
 };

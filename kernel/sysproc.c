@@ -5,6 +5,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "procinfo.h"
 #include "vm.h"
 
 uint64
@@ -106,4 +107,22 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+uint64
+sys_getprocinfo(void)
+{
+  int pid;
+  uint64 uaddr;
+  struct procinfo info;
+
+  if(argint(0, &pid) < 0)
+    return -1;
+  if(argaddr(1, &uaddr) < 0)
+    return -1;
+  if(getprocinfo(pid, &info) < 0)
+    return -1;
+  if(copyout(myproc()->pagetable, uaddr, (char*)&info, sizeof(info)) < 0)
+    return -1;
+  return 0;
 }
