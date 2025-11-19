@@ -10,6 +10,7 @@
 static const int mlfq_time_quanta[MLFQ_LEVELS] = {4, 8, 16, 32};
 
 struct spinlock mlfq_lock;
+extern uint ticks;
 
 struct procqueue {
   struct proc *head;
@@ -26,6 +27,7 @@ enum mlfq_enqueue_pos {
 };
 
 static struct mlfq_state mlfq_state;
+static uint64 last_boost_tick;
 
 static void
 mlfq_queue_init(struct procqueue *q)
@@ -129,6 +131,52 @@ mlfq_make_runnable(struct proc *p, enum mlfq_enqueue_pos pos, int reset_budget)
   if(reset_budget)
     mlfq_reset_budget(p);
   mlfq_enqueue_proc(p, pos);
+}
+
+static void
+mlfq_clear_all_queues(void)
+{
+  acquire(&mlfq_lock);
+  for(int i = 0; i < MLFQ_LEVELS; i++)
+    mlfq_queue_init(&mlfq_state.queues[i]);
+  release(&mlfq_lock);
+}
+
+static void
+mlfq_boost_all(void)
+{
+  struct proc *p;
+
+  mlfq_clear_all_queues();
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) {
+      p->queue_level = MLFQ_DEFAULT_LEVEL;
+      mlfq_reset_budget(p);
+      p->queued = 0;
+      if(p->state == RUNNABLE)
+        mlfq_make_runnable(p, ENQUEUE_TAIL, 0);
+    }
+    release(&p->lock);
+  }
+}
+
+void
+mlfq_force_boost(void)
+{
+  last_boost_tick = ticks;
+  mlfq_boost_all();
+}
+
+static void
+mlfq_maybe_boost(void)
+{
+  if(cpuid() != 0)
+    return;
+
+  uint current = ticks;
+  if(current - last_boost_tick >= MLFQ_BOOST_INTERVAL)
+    mlfq_force_boost();
 }
 
 static void
@@ -805,23 +853,24 @@ int
 scheduler_tick(void)
 {
   struct proc *p = myproc();
+  int slice_expired = 0;
 
-  if(p == 0 || p->state != RUNNING)
-    return 0;
+  if(p && p->state == RUNNING){
+    p->total_runtime++;
+    p->queue_runtime[p->queue_level]++;
+    if(p->time_slice_budget > 0)
+      p->time_slice_budget--;
 
-  p->total_runtime++;
-  p->queue_runtime[p->queue_level]++;
-  if(p->time_slice_budget > 0)
-    p->time_slice_budget--;
-
-  if(p->time_slice_budget <= 0) {
-    if(p->queue_level < MLFQ_LEVELS - 1)
-      p->queue_level++;
-    mlfq_reset_budget(p);
-    return 1;
+    if(p->time_slice_budget <= 0) {
+      if(p->queue_level < MLFQ_LEVELS - 1)
+        p->queue_level++;
+      mlfq_reset_budget(p);
+      slice_expired = 1;
+    }
   }
 
-  return 0;
+  mlfq_maybe_boost();
+  return slice_expired;
 }
 
 // Copy to either a user address, or kernel address,

@@ -124,3 +124,10 @@ sys_getprocinfo(void)
     return -1;
   return 0;
 }
+
+uint64
+sys_boostproc(void)
+{
+  mlfq_force_boost();
+  return 0;
+}

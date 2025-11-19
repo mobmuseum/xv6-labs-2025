@@ -32,9 +32,29 @@ report(const char *label, int pid)
          (int)info.total_runtime);
 }
 
+static void
+usage(void)
+{
+  printf("usage: mlfqdemo [boost_iter|-1]\n");
+  printf("  boost_iter: iteration (0-9) at which to invoke boostproc (default 5)\n");
+  printf("  -1 disables the forced boost.\n");
+  exit(1);
+}
+
 int
 main(int argc, char *argv[])
 {
+  const int iterations = 10;
+  int boost_iter = iterations / 2;
+
+  if(argc > 2)
+    usage();
+  if(argc == 2){
+    boost_iter = atoi(argv[1]);
+    if(boost_iter < -1 || boost_iter >= iterations)
+      usage();
+  }
+
   int cpu_pid = fork();
   if(cpu_pid == 0)
     cpu_worker();
@@ -43,10 +63,17 @@ main(int argc, char *argv[])
   if(io_pid == 0)
     io_worker();
 
-  for(int i = 0; i < 10; i++){
+  for(int i = 0; i < iterations; i++){
     pause(5);
-    report("cpu", cpu_pid);
-    report("io", io_pid);
+    printf("iteration %d:\n", i);
+    report("  cpu", cpu_pid);
+    report("  io ", io_pid);
+
+    if(boost_iter >= 0 && i == boost_iter){
+      printf("mlfqdemo: invoking boostproc() at iteration %d\n", i);
+      if(boostproc() < 0)
+        printf("mlfqdemo: boostproc failed\n");
+    }
   }
 
   kill(cpu_pid);
